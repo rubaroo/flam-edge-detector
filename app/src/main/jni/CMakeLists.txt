@@ -1,37 +1,38 @@
-# For more information about using CMake with Android Studio, read the
-# documentation: https://d.android.com/studio/projects/add-native-code.html.
-# For more examples on how to use CMake, see https://github.com/android/ndk-samples.
-
 # Sets the minimum CMake version required for this project.
 cmake_minimum_required(VERSION 3.22.1)
+project("native-processor")
 
-# Declares the project name. The project name can be accessed via ${ PROJECT_NAME},
-# Since this is the top level CMakeLists.txt, the project name is also accessible
-# with ${CMAKE_PROJECT_NAME} (both CMake variables are in-sync within the top level
-# build script scope).
-project("flamedgedetector")
+# =========================================================================
+# 1. SETUP OpenCV PATHS
+# CORRECTED: Use '../../' to step up from 'jni' to 'main' and then to 'app'
+# This path is relative to app/src/main/jni/
+set(OPENCV_ROOT_DIR ${CMAKE_SOURCE_DIR}/../..)
 
-# Creates and names a library, sets it as either STATIC
-# or SHARED, and provides the relative paths to its source code.
-# You can define multiple libraries, and CMake builds them for you.
-# Gradle automatically packages shared libraries with your APK.
-#
-# In this top level CMakeLists.txt, ${CMAKE_PROJECT_NAME} is used to define
-# the target library name; in the sub-module's CMakeLists.txt, ${PROJECT_NAME}
-# is preferred for the same purpose.
-#
-# In order to load a library into your app from Java/Kotlin, you must call
-# System.loadLibrary() and pass the name of the library defined here;
-# for GameActivity/NativeActivity derived applications, the same library name must be
-# used in the AndroidManifest.xml file.
-add_library(${CMAKE_PROJECT_NAME} SHARED
-        # List C/C++ source files with relative paths to this CMakeLists.txt.
-        native-lib.cpp)
+# Add the OpenCV headers path (now points to app/opencv_modules/include)
+include_directories(${OPENCV_ROOT_DIR}/opencv_modules/include)
 
-# Specifies libraries CMake should link to your target library. You
-# can link libraries from various origins, such as libraries defined in this
-# build script, prebuilt third-party libraries, or Android system libraries.
-target_link_libraries(${CMAKE_PROJECT_NAME}
-        # List libraries link to the target library
+# =========================================================================
+
+# Creates and names a library (MUST match the name in System.loadLibrary)
+add_library(native-processor SHARED
+        # Renamed source file as per previous steps
+        native-processor.cpp)
+
+# =========================================================================
+# 2. LINK OpenCV LIBRARIES
+# Find the specific library path for the current target architecture (ABI)
+# Path points to: app/opencv_modules/libs/arm64-v8a/
+link_directories(${OPENCV_ROOT_DIR}/opencv_modules/libs/${ANDROID_ABI})
+
+# Find the main OpenCV shared library file
+find_library(OPENCV_LIB_NAME
+        opencv_java4) # Name of the .so file is libopencv_java4.so
+
+# =========================================================================
+
+# Specifies libraries CMake should link to your target library.
+target_link_libraries(native-processor # Target library name
         android
-        log)
+        log
+        ${OPENCV_LIB_NAME} # Link the found OpenCV library
+)
