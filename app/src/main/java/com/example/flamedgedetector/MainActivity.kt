@@ -111,12 +111,10 @@ class MainActivity : AppCompatActivity() {
 
         override fun analyze(imageProxy: ImageProxy) {
 
-            // --- Placeholder for Commit 5: YUV to NV21 Conversion ---
-            // The ImageProxy buffer is complex (YUV planes). We need to convert it
-            // to a simple NV21 byte array before passing it to C++.
-            val frameData = byteArrayOf(0)
+            // CRITICAL: Convert the YUV image (which is complex) into a simple NV21 byte array
+            val frameData = imageProxy.toNv21ByteArray()
 
-            // Call the C++ native function with dummy data for now
+            // Call the C++ native function with the real data
             nativeProcessor.processFrame(
                 frameData,
                 imageProxy.width,
