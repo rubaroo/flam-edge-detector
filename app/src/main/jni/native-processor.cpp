@@ -11,7 +11,14 @@
 // Global Mat to hold the RGBA converted image (for persistence/rendering)
 // We declare this globally so it persists between frames, saving allocation time.
 cv::Mat rgbaMat;
+// ADD THESE LINES
+cv::Mat grayMat;     // Holds the single-channel grayscale image
+cv::Mat filteredMat; // Holds the final processed (Canny) image
 
+// Canny parameters (standard starting points)
+const double CANNY_THRESHOLD_1 = 30.0;
+const double CANNY_THRESHOLD_2 = 100.0;
+const int CANNY_APERTURE_SIZE = 3;
 /**
  * JNI function implementation that receives the camera frame data (NV21 format).
  *
@@ -49,17 +56,32 @@ Java_com_example_flamedgedetector_NativeProcessor_processFrame(
     // CV_8UC1 means 8-bit unsigned, 1 channel (since YUV is treated as a single data stream here).
     cv::Mat nv21Mat(height + height / 2, width, CV_8UC1, inputBuffer);
 
-    // 3. Convert NV21 Mat to RGBA Mat (the format needed for OpenGL texture updates)
-    // We only create the RGBA Mat once and reuse it to save memory allocation time.
+    // 3. Ensure our Mats are correctly sized (re-created only if dimensions change)
     if (rgbaMat.empty() || rgbaMat.cols != width || rgbaMat.rows != height) {
-        rgbaMat.create(height, width, CV_8UC4); // CV_8UC4 means 8-bit unsigned, 4 channels (RGBA)
+        rgbaMat.create(height, width, CV_8UC4);     // RGBA output format
+        grayMat.create(height, width, CV_8UC1);     // Grayscale format
+        filteredMat.create(height, width, CV_8UC1); // Canny output
+        LOGD("Mats initialized/resized: %dx%d", width, height);
     }
-
     // The core conversion step that uses the OpenCV library (Commit 2 integration)
     cv::cvtColor(nv21Mat, rgbaMat, cv::COLOR_YUV2RGBA_NV21);
 
+    // 3b. Convert RGBA to Grayscale (Canny requires single channel input)
+    cv::cvtColor(rgbaMat, grayMat, cv::COLOR_RGBA2GRAY);
+
+    // 3c. Gaussian Blur to reduce noise before edge detection
+    cv::GaussianBlur(grayMat, grayMat, cv::Size(5, 5), 0, 0);
+
+    // 3d. Apply Canny Edge Detector (main algorithm)
+    cv::Canny(grayMat, filteredMat, CANNY_THRESHOLD_1, CANNY_THRESHOLD_2, CANNY_APERTURE_SIZE);
+
+    // 3e. Convert the final single-channel Canny output back to RGBA for OpenGL rendering.
+    cv::cvtColor(filteredMat, rgbaMat, cv::COLOR_GRAY2RGBA);
+
+    // ====================================================================
+
     // --- DAY 1 DEBUG/PLACEHOLDER LOGIC ---
-    // This log confirms the frame arrived, was converted, and is ready for processing.
+    // This log confirms the frame arrived...
     LOGD("Processed Frame: %dx%d. RGBA conversion complete. Output Texture ID: %d", width, height, outputTextureId);
 
     // 4. IMPORTANT: Release the array elements. This MUST be called after GetByteArrayElements.
