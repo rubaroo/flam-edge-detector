@@ -15,31 +15,35 @@ import java.util.concurrent.Executors
 
 /**
  * Primary activity responsible for handling camera permissions, CameraX setup,
- * and binding the image analysis pipeline to the JNI NativeProcessor.
+ * and binding the image analysis pipeline to the JNI NativeProcessor + OpenGL renderer.
  */
 class MainActivity : AppCompatActivity() {
+    private lateinit var glCameraView: GLCameraView
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
-    private val nativeProcessor = NativeProcessor() // Instance of our JNI bridge class
+    private val nativeProcessor = NativeProcessor() // JNI bridge
 
-    // Arbitrary request code for permissions
     private val REQUEST_CODE_PERMISSIONS = 10
-
-    // List of permissions required for the camera
     private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+
+    // Will hold the OpenGL texture ID from GLCameraView
+    private var textureId: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Setup View Binding
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Initialize executor for camera analysis thread (needed for ImageAnalysis.Analyzer)
+        // ✅ Initialize non-null reference safely
+        glCameraView = binding.viewFinder
+            ?: throw IllegalStateException("GLCameraView not found in layout")
+
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        // Check for camera permissions and start camera or request permissions
+        // ✅ Retrieve OpenGL texture ID
+        textureId = glCameraView.getTextureId()
+
         if (allPermissionsGranted()) {
             startCamera()
         } else {
@@ -49,15 +53,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Checks if all required permissions are granted.
-     */
+
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
     }
 
     /**
-     * Binds CameraX use cases to the lifecycle.
+     * Configures CameraX — ImageAnalysis only (no PreviewView now).
      */
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
@@ -65,36 +67,26 @@ class MainActivity : AppCompatActivity() {
         cameraProviderFuture.addListener({
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
-            // 1. Preview Use Case: Displays the raw camera feed on the screen
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    // Assuming 'viewFinder' is the ID of your PreviewView in activity_main.xml
-                    it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
-                }
+            // ❌ Remove Preview use case (we’ll render through OpenGL now)
+            // val preview = Preview.Builder().build().also {
+            //     it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
+            // }
 
-            // 2. Image Analysis Use Case: Provides frames for processing
+            // ✅ Keep ImageAnalysis for frame-by-frame processing
             val imageAnalyzer = ImageAnalysis.Builder()
-                // Use the latest frame and discard older ones if processing is slow
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
                 .also {
-                    // Set up the analyzer thread using the custom ImageAnalyzer class
                     it.setAnalyzer(cameraExecutor, ImageAnalyzer())
                 }
 
-            // Select back camera as a default
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
-                // Unbind any existing use cases before rebinding
                 cameraProvider.unbindAll()
-
-                // Bind use cases to camera lifecycle
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageAnalyzer
+                    this, cameraSelector, imageAnalyzer
                 )
-
             } catch (exc: Exception) {
                 Log.e("MainActivity", "Use case binding failed", exc)
             }
@@ -103,33 +95,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Custom Analyzer class to process the camera frames and call JNI.
+     * Custom Analyzer class to process camera frames through JNI + OpenGL.
      */
     private inner class ImageAnalyzer : ImageAnalysis.Analyzer {
-        // Placeholder for the OpenGL texture ID (will be set up later in Day 2)
-        private val outputTextureId: Int = 0
 
         override fun analyze(imageProxy: ImageProxy) {
-
-            // CRITICAL: Convert the YUV image (which is complex) into a simple NV21 byte array
             val frameData = imageProxy.toNv21ByteArray()
 
-            // Call the C++ native function with the real data
+            // 🔥 Send frame to JNI and render to OpenGL texture
             nativeProcessor.processFrame(
                 frameData,
                 imageProxy.width,
                 imageProxy.height,
-                outputTextureId
+                textureId
             )
 
-            // CRITICAL: Close the image proxy to release the buffer and allow the next frame
+            // Request redraw on GLSurfaceView after new texture data
+            runOnUiThread {
+                glCameraView.refreshFrame()
+            }
+
             imageProxy.close()
         }
     }
 
     override fun onRequestPermissionsResult(
-        requestCode: Int, permissions: Array<String>, grantResults:
-        IntArray
+        requestCode: Int, permissions: Array<String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
@@ -137,13 +128,13 @@ class MainActivity : AppCompatActivity() {
                 startCamera()
             } else {
                 Log.e("MainActivity", "Permissions not granted by the user.")
-                finish() // Close the app if permissions are denied
+                finish()
             }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        cameraExecutor.shutdown() // Important to shut down the executor thread
+        cameraExecutor.shutdown()
     }
 }
