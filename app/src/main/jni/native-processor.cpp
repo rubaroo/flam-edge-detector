@@ -3,6 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <android/log.h>
 #include <chrono>
+#include <GLES2/gl2.h>
 
 // Define log tag for easy filtering in logcat
 #define LOG_TAG "NativeProcessor"
@@ -14,11 +15,14 @@ cv::Mat rgbaMat;
 // ADD THESE LINES
 cv::Mat grayMat;     // Holds the single-channel grayscale image
 cv::Mat filteredMat; // Holds the final processed (Canny) image
+static int gWidth = 0;
+static int gHeight = 0;
 
 // Canny parameters (standard starting points)
 const double CANNY_THRESHOLD_1 = 30.0;
 const double CANNY_THRESHOLD_2 = 100.0;
 const int CANNY_APERTURE_SIZE = 3;
+
 /**
  * JNI function implementation that receives the camera frame data (NV21 format).
  *
@@ -83,6 +87,43 @@ Java_com_example_flamedgedetector_NativeProcessor_processFrame(
     // --- DAY 1 DEBUG/PLACEHOLDER LOGIC ---
     // This log confirms the frame arrived...
     LOGD("Processed Frame: %dx%d. RGBA conversion complete. Output Texture ID: %d", width, height, outputTextureId);
+    // --- Commit 9: Upload processed RGBA frame to OpenGL texture ---
+
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(outputTextureId));
+
+    if (gWidth != width || gHeight != height) {
+        // First-time texture allocation or resized frame
+        glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_RGBA,
+                width,
+                height,
+                0,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                rgbaMat.data
+        );
+        gWidth = width;
+        gHeight = height;
+        LOGD("Texture initialized (%dx%d)", width, height);
+    } else {
+        // Update existing texture pixels
+        glTexSubImage2D(
+                GL_TEXTURE_2D,
+                0,
+                0,
+                0,
+                width,
+                height,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                rgbaMat.data
+        );
+    }
+
+    glFinish(); // Ensure GPU upload completes before next frame
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     // 4. IMPORTANT: Release the array elements. This MUST be called after GetByteArrayElements.
     // JNI_ABORT ensures the copied changes are discarded (since we only read it).
